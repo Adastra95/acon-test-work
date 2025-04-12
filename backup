@@ -1,0 +1,313 @@
+<template>
+  <div id="app">
+    <h1 class="title">Иерархия сетей</h1>
+    
+    <!-- Поле ввода и кнопка для поиска -->
+    <div class="search-container">
+      <input
+        type="text"
+        v-model="searchIp"
+        placeholder="Введите IP-адрес"
+        class="search-input"
+      />
+      <button @click="searchNetwork" class="search-button">Поиск</button>
+    </div>
+
+    <!-- Кнопка "Назад" для сброса поиска -->
+    <div v-if="filteredNetworks.length > 0" class="back-container">
+      <button @click="resetSearch" class="back-button">Назад</button>
+    </div>
+
+    <!-- Форма для ввода данных о пуле -->
+    <div class="pool-container">
+      <h2>Выделение пула из сети</h2>
+      <label for="firstAddress">Первый адрес:</label>
+      <input v-model="firstAddress" type="text" placeholder="Первый адрес" />
+      
+      <label for="lastAddress">Последний адрес:</label>
+      <input v-model="lastAddress" type="text" placeholder="Последний адрес" />
+      
+      <label for="poolSize">Размер пула:</label>
+      <input v-model="poolSize" type="number" placeholder="Размер пула" />
+      
+      <button @click="calculatePool" class="calculate-button">Рассчитать пул</button>
+      
+      <div v-if="errorMessage" class="error-message">{{ errorMessage }}</div>
+      
+      <div v-if="calculatedPool">
+        <h3>Рассчитанный пул:</h3>
+        <p>Первый адрес: {{ calculatedPool.firstAddress }}</p>
+        <p>Последний адрес: {{ calculatedPool.lastAddress }}</p>
+        <p>Размер пула: {{ calculatedPool.poolSize }}</p>
+      </div>
+    </div>
+
+    <!-- Список сетей -->
+    <div class="tree" v-if="filteredNetworks.length > 0">
+      <div v-for="network in filteredNetworks" :key="network.id" class="tree-item">
+        <div class="network-name">{{ network.name }}</div>
+        <div v-if="network.children && network.children.length" class="subtree">
+          <div v-for="child in network.children" :key="child.id" class="tree-item">
+            <div class="network-name">{{ child.name }}</div>
+            <div v-if="child.children && child.children.length" class="subtree">
+              <div v-for="subchild in child.children" :key="subchild.id" class="tree-item">
+                <div class="network-name">{{ subchild.name }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Сообщение, если не найдены сети -->
+    <div v-else class="no-results">Сети не найдены для данного IP.</div>
+  </div>
+</template>
+
+<script>
+import axios from 'axios';
+
+export default {
+  name: 'App',
+  data() {
+    return {
+      networks: [],           // Все сети
+      searchIp: '',           // Храним введенный IP-адрес
+      filteredNetworks: [],   // Сети после фильтрации по IP
+      firstAddress: '',       // Первый адрес пула
+      lastAddress: '',        // Последний адрес пула
+      poolSize: '',           // Размер пула
+      errorMessage: '',       // Сообщение об ошибке
+      calculatedPool: null,   // Рассчитанный пул
+    };
+  },
+  mounted() {
+    this.fetchNetworks();
+  },
+  methods: {
+    async fetchNetworks() {
+      try {
+        const response = await axios.get('http://82.144.67.254:9000/api/v1/network');
+        this.networks = this.formatHierarchy(response.data);
+        this.filteredNetworks = this.networks; // По умолчанию показываем все сети
+      } catch (error) {
+        console.error('Ошибка при получении данных:', error);
+      }
+    },
+    formatHierarchy(data) {
+      const groups = {};
+      
+      data.forEach(network => {
+        const prefix = network.name && network.name.split('_')[1]; // Проверяем наличие имени сети
+
+        if (!prefix) {
+          return;
+        }
+
+        if (!groups[prefix]) {
+          groups[prefix] = [];
+        }
+        groups[prefix].push(network);
+      });
+
+      const formattedNetworks = Object.keys(groups).map(prefix => {
+        return {
+          name: `net_${prefix}`,
+          children: groups[prefix],
+        };
+      });
+
+      return formattedNetworks;
+    },
+    searchNetwork() {
+      if (!this.isValidIp(this.searchIp)) {
+        alert('Введите корректный IP-адрес!');
+        return;
+      }
+
+      // Фильтруем сети, которые содержат данный IP-адрес
+      this.filteredNetworks = this.networks.filter(network => this.isIpInNetwork(this.searchIp, network));
+    },
+    isValidIp(ip) {
+      return ip && ip.match(/^(\d{1,3}\.){3}\d{1,3}$/); // Простая проверка формата IP
+    },
+    isIpInNetwork(ip, network) {
+      const networkPrefix = network.name.split('_')[1];
+      return ip.startsWith(networkPrefix); // Пример упрощенной логики
+    },
+    resetSearch() {
+      this.filteredNetworks = this.networks; // Сбросим фильтрацию и покажем все сети
+      this.searchIp = ''; // Очистим поле ввода
+    },
+    calculatePool() {
+      this.errorMessage = ''; // Сбросим старую ошибку
+      
+      if (this.firstAddress && this.lastAddress) {
+        // Рассчитываем размер пула
+        const firstIp = this.ipToInt(this.firstAddress);
+        const lastIp = this.ipToInt(this.lastAddress);
+        
+        if (firstIp >= lastIp) {
+          this.errorMessage = 'Первый адрес должен быть меньше последнего адреса.';
+          return;
+        }
+        
+        this.poolSize = lastIp - firstIp + 1;
+        this.calculatedPool = {
+          firstAddress: this.firstAddress,
+          lastAddress: this.lastAddress,
+          poolSize: this.poolSize,
+        };
+      } else if (this.firstAddress && this.poolSize) {
+        // Рассчитываем последний адрес
+        const firstIp = this.ipToInt(this.firstAddress);
+        const lastIp = firstIp + this.poolSize - 1;
+        this.lastAddress = this.intToIp(lastIp);
+        this.calculatedPool = {
+          firstAddress: this.firstAddress,
+          lastAddress: this.lastAddress,
+          poolSize: this.poolSize,
+        };
+      } else if (this.lastAddress && this.poolSize) {
+        // Рассчитываем первый адрес
+        const lastIp = this.ipToInt(this.lastAddress);
+        const firstIp = lastIp - this.poolSize + 1;
+        this.firstAddress = this.intToIp(firstIp);
+        this.calculatedPool = {
+          firstAddress: this.firstAddress,
+          lastAddress: this.lastAddress,
+          poolSize: this.poolSize,
+        };
+      } else {
+        this.errorMessage = 'Необходимо задать два из трёх параметров: первый адрес, последний адрес, размер пула.';
+      }
+    },
+    ipToInt(ip) {
+      const parts = ip.split('.').map(Number);
+      return (parts[0] << 24) + (parts[1] << 16) + (parts[2] << 8) + parts[3];
+    },
+    intToIp(int) {
+      return [
+        (int >>> 24) & 255,
+        (int >>> 16) & 255,
+        (int >>> 8) & 255,
+        int & 255
+      ].join('.');
+    }
+  },
+};
+</script>
+
+<style scoped>
+.pool-container {
+  margin-top: 30px;
+  padding: 20px;
+  background-color: #e0f7fa;
+  border-radius: 8px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.pool-container input {
+  padding: 10px;
+  font-size: 16px;
+  margin-right: 10px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  width: 180px;
+}
+
+.calculate-button {
+  padding: 10px 20px;
+  font-size: 16px;
+  background-color: #4CAF50;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.calculate-button:hover {
+  background-color: #45a049;
+}
+
+.error-message {
+  color: red;
+  font-size: 16px;
+  margin-top: 10px;
+}
+
+.no-results {
+  color: red;
+  text-align: center;
+  margin-top: 20px;
+  font-size: 18px;
+}
+
+.search-container {
+  margin-bottom: 20px;
+}
+
+.search-input {
+  padding: 8px;
+  font-size: 16px;
+  width: 200px;
+}
+
+.search-button {
+  padding: 10px 20px;
+  font-size: 16px;
+  background-color: #2196F3;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.search-button:hover {
+  background-color: #0b7dda;
+}
+
+.back-container {
+  margin-top: 10px;
+}
+
+.back-button {
+  padding: 10px 20px;
+  font-size: 16px;
+  background-color: #FF5722;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.back-button:hover {
+  background-color: #d45d16;
+}
+
+.tree {
+  margin-top: 30px;
+}
+
+.tree-item {
+  padding: 10px;
+  background-color: #f0f0f0;
+  margin: 5px 0;
+  border-radius: 4px;
+}
+
+.subtree {
+  margin-left: 20px;
+}
+
+.network-name {
+  font-weight: bold;
+}
+
+.title {
+  font-size: 24px;
+  margin-bottom: 20px;
+  text-align: center;
+}
+
+</style>
