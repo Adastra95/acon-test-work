@@ -1,7 +1,7 @@
 <template>
   <div id="app">
     <h1 class="title">Иерархия сетей</h1>
-    
+
     <!-- Поле ввода и кнопка для поиска -->
     <div class="search-container">
       <input
@@ -45,10 +45,18 @@
     <!-- Список сетей -->
     <div class="tree" v-if="filteredNetworks.length > 0">
       <div v-for="network in filteredNetworks" :key="network.id" class="tree-item">
-        <div class="network-name">{{ network.name }}</div>
+        <div class="network-name">
+          {{ network.name }}
+          <button @click="editNetwork(network)" class="edit-button">Редактировать</button>
+          <button @click="deleteNetwork(network.id)" class="delete-button">Удалить</button>
+        </div>
         <div v-if="network.children && network.children.length" class="subtree">
           <div v-for="child in network.children" :key="child.id" class="tree-item">
-            <div class="network-name">{{ child.name }}</div>
+            <div class="network-name">
+              {{ child.name }}
+              <button @click="editNetwork(child)" class="edit-button">Редактировать</button>
+              <button @click="deleteNetwork(child.id)" class="delete-button">Удалить</button>
+            </div>
             <div v-if="child.children && child.children.length" class="subtree">
               <div v-for="subchild in child.children" :key="subchild.id" class="tree-item">
                 <div class="network-name">{{ subchild.name }}</div>
@@ -59,8 +67,24 @@
       </div>
     </div>
 
-    <!-- Сообщение, если не найдены сети -->
-    <div v-else class="no-results">Сети не найдены для данного IP.</div>
+    <!-- Форма редактирования сети -->
+    <div v-if="editingNetwork" class="edit-form-container">
+      <h2>Редактировать сеть</h2>
+      <input v-model="editingNetwork.name" class="input-field" />
+      <button @click="saveNetwork" class="action-button">Сохранить изменения</button>
+      <button @click="cancelEdit" class="cancel-button">Отменить</button>
+    </div>
+
+
+
+    <!-- Форма для добавления новой сети -->
+    <div class="add-network-container">
+      <h2>Добавить новую сеть</h2>
+      <input v-model="newNetworkName" type="text" placeholder="Имя новой сети" class="input-field" />
+      <input v-model="newNetworkCidr" type="text" placeholder="CIDR новой сети" class="input-field" />
+      <input v-model="newNetworkParentId" type="number" placeholder="ID родительской сети" class="input-field" />
+      <button @click="addNetwork" class="add-network-button">Добавить сеть</button>
+    </div>
   </div>
 </template>
 
@@ -70,135 +94,178 @@ import axios from 'axios';
 export default {
   name: 'App',
   data() {
-    return {
-      networks: [],           // Все сети
-      searchIp: '',           // Храним введенный IP-адрес
-      filteredNetworks: [],   // Сети после фильтрации по IP
-      firstAddress: '',       // Первый адрес пула
-      lastAddress: '',        // Последний адрес пула
-      poolSize: '',           // Размер пула
-      errorMessage: '',       // Сообщение об ошибке
-      calculatedPool: null,   // Рассчитанный пул
-    };
-  },
+  return {
+    networks: [],
+    allNetworks: [], // Добавляем новую переменную для хранения всех сетей
+    searchIp: '',
+    filteredNetworks: [],
+    firstAddress: '',
+    lastAddress: '',
+    poolSize: '',
+    errorMessage: '',
+    calculatedPool: null,
+    editingNetwork: null,
+    newNetworkName: '',
+    newNetworkCidr: '',
+    newNetworkParentId: 0,
+  };
+},
   mounted() {
     this.fetchNetworks();
   },
   methods: {
     async fetchNetworks() {
-      try {
-        const response = await axios.get('http://82.144.67.254:9000/api/v1/network');
-        this.networks = this.formatHierarchy(response.data);
-        this.filteredNetworks = this.networks; // По умолчанию показываем все сети
-      } catch (error) {
-        console.error('Ошибка при получении данных:', error);
-      }
-    },
+  try {
+    const response = await axios.get('http://82.144.67.254:9000/api/v1/network');
+    this.networks = this.formatHierarchy(response.data);
+    this.allNetworks = [...this.networks]; // Сохраняем все сети
+    this.filteredNetworks = this.networks;
+  } catch (error) {
+    console.error('Ошибка при получении данных:', error);
+  }
+},
     formatHierarchy(data) {
       const groups = {};
-      
       data.forEach(network => {
-        const prefix = network.name && network.name.split('_')[1]; // Проверяем наличие имени сети
-
-        if (!prefix) {
-          return;
-        }
-
-        if (!groups[prefix]) {
-          groups[prefix] = [];
-        }
+        const prefix = network.name && network.name.split('_')[1];
+        if (!prefix) return;
+        if (!groups[prefix]) groups[prefix] = [];
         groups[prefix].push(network);
       });
 
-      const formattedNetworks = Object.keys(groups).map(prefix => {
-        return {
-          name: `net_${prefix}`,
-          children: groups[prefix],
-        };
-      });
-
-      return formattedNetworks;
+      return Object.keys(groups).map(prefix => ({
+        name: `net_${prefix}`,
+        children: groups[prefix],
+      }));
     },
     searchNetwork() {
-      if (!this.isValidIp(this.searchIp)) {
-        alert('Введите корректный IP-адрес!');
-        return;
-      }
+  if (!this.isValidIp(this.searchIp)) {
+    alert('Введите корректный IP-адрес!');
+    return;
+  }
 
-      // Фильтруем сети, которые содержат данный IP-адрес
-      this.filteredNetworks = this.networks.filter(network => this.isIpInNetwork(this.searchIp, network));
-    },
+  // Фильтрация сетей по введенному IP
+  this.filteredNetworks = this.networks.filter(network => this.isIpInNetwork(this.searchIp, network));
+
+  // Если сетей не найдено, показываем алерт и восстанавливаем все сети
+  if (this.filteredNetworks.length === 0) {
+    alert('Сеть по данному IP не найдена!');
+    this.filteredNetworks = [...this.networks];  // Восстановление всех сетей после алерта
+  }
+},
+
     isValidIp(ip) {
-      return ip && ip.match(/^(\d{1,3}\.){3}\d{1,3}$/); // Простая проверка формата IP
+      return ip && ip.match(/^(\d{1,3}\.){3}\d{1,3}$/);
     },
     isIpInNetwork(ip, network) {
       const networkPrefix = network.name.split('_')[1];
-      return ip.startsWith(networkPrefix); // Пример упрощенной логики
+      return ip.startsWith(networkPrefix);
     },
     resetSearch() {
-      this.filteredNetworks = this.networks; // Сбросим фильтрацию и покажем все сети
-      this.searchIp = ''; // Очистим поле ввода
-    },
+  this.filteredNetworks = [...this.allNetworks]; // Восстанавливаем все сети
+  this.searchIp = '';
+},
+
     calculatePool() {
-      this.errorMessage = ''; // Сбросим старую ошибку
-      
+      this.errorMessage = '';
       if (this.firstAddress && this.lastAddress) {
-        // Рассчитываем размер пула
         const firstIp = this.ipToInt(this.firstAddress);
         const lastIp = this.ipToInt(this.lastAddress);
-        
         if (firstIp >= lastIp) {
           this.errorMessage = 'Первый адрес должен быть меньше последнего адреса.';
           return;
         }
-        
         this.poolSize = lastIp - firstIp + 1;
-        this.calculatedPool = {
-          firstAddress: this.firstAddress,
-          lastAddress: this.lastAddress,
-          poolSize: this.poolSize,
-        };
+        this.calculatedPool = { firstAddress: this.firstAddress, lastAddress: this.lastAddress, poolSize: this.poolSize };
       } else if (this.firstAddress && this.poolSize) {
-        // Рассчитываем последний адрес
         const firstIp = this.ipToInt(this.firstAddress);
         const lastIp = firstIp + this.poolSize - 1;
         this.lastAddress = this.intToIp(lastIp);
-        this.calculatedPool = {
-          firstAddress: this.firstAddress,
-          lastAddress: this.lastAddress,
-          poolSize: this.poolSize,
-        };
+        this.calculatedPool = { firstAddress: this.firstAddress, lastAddress: this.lastAddress, poolSize: this.poolSize };
       } else if (this.lastAddress && this.poolSize) {
-        // Рассчитываем первый адрес
         const lastIp = this.ipToInt(this.lastAddress);
         const firstIp = lastIp - this.poolSize + 1;
         this.firstAddress = this.intToIp(firstIp);
-        this.calculatedPool = {
-          firstAddress: this.firstAddress,
-          lastAddress: this.lastAddress,
-          poolSize: this.poolSize,
-        };
+        this.calculatedPool = { firstAddress: this.firstAddress, lastAddress: this.lastAddress, poolSize: this.poolSize };
       } else {
         this.errorMessage = 'Необходимо задать два из трёх параметров: первый адрес, последний адрес, размер пула.';
       }
     },
     ipToInt(ip) {
-      const parts = ip.split('.').map(Number);
-      return (parts[0] << 24) + (parts[1] << 16) + (parts[2] << 8) + parts[3];
+      return ip.split('.').reduce((acc, octet) => (acc << 8) + parseInt(octet, 10), 0);
     },
     intToIp(int) {
-      return [
-        (int >>> 24) & 255,
-        (int >>> 16) & 255,
-        (int >>> 8) & 255,
-        int & 255
-      ].join('.');
-    }
+      return [(int >>> 24) & 255, (int >>> 16) & 255, (int >>> 8) & 255, int & 255].join('.');
+    },
+    editNetwork(network) {
+      this.editingNetwork = { ...network };
+    },
+    saveNetwork() {
+      const index = this.networks.findIndex(network => network.id === this.editingNetwork.id);
+      if (index !== -1) {
+        this.networks[index] = this.editingNetwork;
+        this.filteredNetworks = this.networks;
+      }
+      this.editingNetwork = null;
+    },
+    cancelEdit() {
+      this.editingNetwork = null;
+    },
+    async deleteNetwork(id) {
+      try {
+        await axios.delete(`http://82.144.67.254:9000/api/v1/network/${id}`);
+        this.networks = this.networks.filter(network => network.id !== id);
+        this.filteredNetworks = this.filteredNetworks.filter(network => network.id !== id);
+      } catch (error) {
+        console.error('Ошибка при удалении сети:', error);
+      }
+    },
+    async addNetwork() {
+      try {
+        const newNetwork = {
+          name: this.newNetworkName,
+          cidr: this.newNetworkCidr,
+          parentId: this.newNetworkParentId,
+        };
+        const response = await axios.post('http://82.144.67.254:9000/api/v1/network', newNetwork);
+        this.networks.push(response.data);
+        this.filteredNetworks = this.networks;
+        this.newNetworkName = '';
+        this.newNetworkCidr = '';
+        this.newNetworkParentId = 0;
+      } catch (error) {
+        console.error('Ошибка при добавлении сети:', error);
+      }
+    },
   },
 };
 </script>
 
 <style scoped>
+
+.add-network-container {
+  margin-top: 20px;
+  padding: 20px;
+  border: 1px solid #ccc;
+  background-color: #f9f9f9;
+}
+
+.add-network-container h2 {
+  margin-bottom: 10px;
+}
+
+.add-network-button {
+  margin-top: 10px;
+  padding: 10px;
+  background-color: #28a745;
+  color: white;
+  border: none;
+  cursor: pointer;
+}
+
+.add-network-button:hover {
+  background-color: #218838;
+}
 .pool-container {
   margin-top: 30px;
   padding: 20px;
@@ -310,4 +377,48 @@ export default {
   text-align: center;
 }
 
+.delete-button {
+  padding: 5px 10px;
+  font-size: 14px;
+  background-color: #FF5722;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-left: auto; /* Сдвигает кнопку вправо */
+}
+
+.delete-button:hover {
+  background-color: #d45d16;
+}
+
+.network-container {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+/* Стили для компонентов останутся прежними, добавим необходимые для управления сетями */
+.add-network-container {
+  margin-top: 20px;
+  padding: 20px;
+  border: 1px solid #ccc;
+  background-color: #f9f9f9;
+}
+
+.add-network-container h2 {
+  margin-bottom: 10px;
+}
+
+.add-network-button {
+  margin-top: 10px;
+  padding: 10px;
+  background-color: #28a745;
+  color: white;
+  border: none;
+  cursor: pointer;
+}
+
+.add-network-button:hover {
+  background-color: #218838;
+}
 </style>
