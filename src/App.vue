@@ -271,7 +271,7 @@ export default {
           cidr: this.newNetworkCidr,
           parent_id: this.newNetworkParentId,
         };
-        const response = await axios.post(`/api/api/v1/network`, newNetwork);
+        const response = await axios.post(`/api/api/v1/network/`, newNetwork);
         this.networks.push(response.data);
         this.filteredNetworks = this.networks;
         this.newNetworkName = '';
