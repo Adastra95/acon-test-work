@@ -14,6 +14,7 @@
     "ip": "^2.0.1",
     "ip-cidr": "^4.0.2",
     "os-browserify": "^0.3.0",
+    "tree-table-vue": "^1.1.0",
     "vue": "^3.2.13"
   },
   "devDependencies": {

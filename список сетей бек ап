@@ -1,0 +1,101 @@
+<template>
+    <div id="app">
+      <h1 class="title">Список сетей и их иерархия</h1>
+  
+      <table class="network-table">
+        <thead>
+          <tr>
+            <th>Сеть</th>
+            <th>Дочерние сети</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="network in networks" :key="network.id">
+            <td>{{ network.name }}</td>
+            <td>
+              <ul>
+                <li
+                  v-for="child in getChildren(network.id)"
+                  :key="child.id"
+                >
+                  {{ child.name }}
+                </li>
+              </ul>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </template>
+  
+  <script>
+  import axios from 'axios';
+  
+  export default {
+    data() {
+      return {
+        networks: [],         // Сети из /network/
+        hierarchyTree: [],    // Иерархия из /network/tree
+        childrenMap: {},      // Map для хранения дочерних сетей по parent_id
+      };
+    },
+    methods: {
+      async fetchNetworks() {
+        try {
+          const [networksResponse, treeResponse] = await Promise.all([
+            axios.get('http://82.144.67.254:9001/api/v1/network/'),
+            axios.get('http://82.144.67.254:9001/api/v1/network/tree'),
+          ]);
+  
+          this.networks = networksResponse.data;
+          this.hierarchyTree = treeResponse.data;
+  
+          this.buildChildrenMap(this.hierarchyTree);
+        } catch (error) {
+          console.error('Ошибка при получении данных:', error);
+        }
+      },
+      buildChildrenMap(tree) {
+        const map = {};
+        const traverse = (nodes) => {
+          for (const node of nodes) {
+            if (node.parent_id) {
+              if (!map[node.parent_id]) {
+                map[node.parent_id] = [];
+              }
+              map[node.parent_id].push(node);
+            }
+            if (node.children && node.children.length > 0) {
+              traverse(node.children);
+            }
+          }
+        };
+        traverse(tree);
+        this.childrenMap = map;
+      },
+      getChildren(parentId) {
+        return this.childrenMap[parentId] || [];
+      },
+    },
+    mounted() {
+      this.fetchNetworks();
+    },
+  };
+  </script>
+  
+  <style scoped>
+  .network-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+  }
+  .network-table th,
+  .network-table td {
+    border: 1px solid #ccc;
+    padding: 10px;
+  }
+  .network-table th {
+    background-color: #f9f9f9;
+  }
+  </style>
+  
